@@ -1,0 +1,83 @@
+# Cell 1: Install required packages
+!pip install transformers datasets sacrebleu
+!pip install --upgrade transformers
+# Cell 2: Import necessary libraries
+import numpy as np
+import pandas as pd
+from datasets import load_dataset
+from transformers import MarianMTModel, MarianTokenizer
+from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer
+from transformers import DataCollatorForSeq2Seq
+import torch
+# Cell 3: Load the dataset and model
+# Load the WMT14 dataset (French-English)
+dataset = load_dataset("wmt14", "fr-en", split="train[:5000]")  # Using only 5000 examples for demonstration
+val_dataset = load_dataset("wmt14", "fr-en", split="validation[:500]")
+
+# Load the pre-trained model and tokenizer
+model_name = "Helsinki-NLP/opus-mt-fr-en"
+tokenizer = MarianTokenizer.from_pretrained(model_name)
+model = MarianMTModel.from_pretrained(model_name)
+# Cell 4: Preprocess the data
+def preprocess_function(examples):
+    inputs = [ex['fr'] for ex in examples['translation']]
+    targets = [ex['en'] for ex in examples['translation']]
+
+    model_inputs = tokenizer(inputs, max_length=128, truncation=True, padding="max_length")
+    labels = tokenizer(targets, max_length=128, truncation=True, padding="max_length")
+
+    model_inputs["labels"] = labels["input_ids"]
+    return model_inputs
+
+# Apply preprocessing to both training and validation datasets
+tokenized_dataset = dataset.map(preprocess_function, batched=True)
+tokenized_val_dataset = val_dataset.map(preprocess_function, batched=True)
+# Cell 5: Set up training arguments and trainer
+training_args = Seq2SeqTrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    learning_rate=2e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=3,
+    weight_decay=0.01,
+    save_total_limit=3,
+)
+
+# Initialize data collator
+data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
+
+# Initialize trainer
+trainer = Seq2SeqTrainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_dataset,
+    eval_dataset=tokenized_val_dataset,
+    tokenizer=tokenizer,
+    data_collator=data_collator,
+)
+# Cell 6: Test the model with your own sentences
+def translate_text(text):
+    # Tokenize the text
+    inputs = tokenizer(text, return_tensors="pt", padding=True)
+
+    # Generate translation
+    outputs = model.generate(**inputs)
+
+    # Decode the generated tokens
+    translated_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+    return translated_text[0]
+
+# Test with some example French sentences
+french_texts = [
+    "Bonjour, comment allez-vous?",
+    "J'aime programmer en Python.",
+    "L'intelligence artificielle est fascinante."
+]
+
+for text in french_texts:
+    translation = translate_text(text)
+    print(f"French: {text}")
+    print(f"English: {translation}")
+    print()
