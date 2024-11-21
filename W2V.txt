@@ -1,11 +1,11 @@
-Word2Vec Implementation (Skipgram and CBOW)
+"""Word2Vec Implementation (Skipgram and CBOW)
 Trained on IMDB instead of Google News corpus.
 Context window size is 9 (4 words on the left, middle word and 4 words on the right)
 CBOW model uses averaging instead of sum of embedding vectors
 IN Skip-Gram model all context words are sampled with the same probability.
 No Hierarchical Softmax, plain Softmax is used.
 No negative smapling
-Regularization applied: embedding vector norms are restricted to 1.
+Regularization applied: embedding vector norms are restricted to 1."""
 
 !pip install torch==2.0.1 torchtext==0.15.2
 !pip install 'portalocker>=2.0.0'
