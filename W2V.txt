@@ -1,0 +1,332 @@
+Word2Vec Implementation (Skipgram and CBOW)
+Trained on IMDB instead of Google News corpus.
+Context window size is 9 (4 words on the left, middle word and 4 words on the right)
+CBOW model uses averaging instead of sum of embedding vectors
+IN Skip-Gram model all context words are sampled with the same probability.
+No Hierarchical Softmax, plain Softmax is used.
+No negative smapling
+Regularization applied: embedding vector norms are restricted to 1.
+
+!pip install torch==2.0.1 torchtext==0.15.2
+!pip install 'portalocker>=2.0.0'
+# Allows to fix certain number of arguments of a function and generate new function with fewer arguments.
+from functools import partial
+import numpy as np
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch import optim  # provides various optimizers
+
+from torchtext import datasets
+from torchtext.data.utils import get_tokenizer  # Provides method to tokenize text
+from torchtext.vocab import build_vocab_from_iterator # Converts the tokenized text into a vocabulary
+if torch.cuda.is_available():
+    device=torch.device(type='cuda',index=0)
+else:
+    device=torch.device(type='cpu',index=0)
+train_data=datasets.IMDB(split='train')
+eval_data=datasets.IMDB(split='test')
+# Iterate over train data
+mapped_train_data=[]
+for label,review in train_data:
+    mapped_train_data.append(review) #we just need reviews for word2vec
+# Iterate over test data
+mapped_eval_data=[]
+for label,review in eval_data:
+    mapped_eval_data.append(review)
+# First Review
+mapped_train_data[0]
+# Type of review is string
+print(type(mapped_train_data[0]))
+# list of string
+mapped_train_data[0:2]
+# First arguement specifies the tokenizer name
+# Second arguement specifies the language
+tokenizer = get_tokenizer("basic_english", language="en")
+
+
+# Returns _basic_english_normalize() function, which normalize the string first and split by space.
+
+"""
+    Basic normalization for a line of text.
+    Normalization includes
+    - lowercasing
+    - complete some basic text normalization for English words as follows:
+        add spaces before and after '\''
+        remove '\"',
+        add spaces before and after '.'
+        replace '<br \/>'with single space
+        add spaces before and after ','
+        add spaces before and after '('
+        add spaces before and after ')'
+        add spaces before and after '!'
+        add spaces before and after '?'
+        replace ';' with single space
+        replace ':' with single space
+        replace multiple spaces with single space
+
+    Returns a list of tokens after splitting on whitespace.
+    """
+# Build the vocab
+# Returns an object of Vocab class
+min_word_freq=20 
+def build_vocab(mapped_train_data, tokenizer):        
+    vocab = build_vocab_from_iterator(         # This function generates vocab from mapped_train_data
+        map(tokenizer, mapped_train_data),     # Tokenizer applied to mapped_train_data to split into tokens
+        specials=["<unk>"],                    # Used for any word that doesn't exist in the vocabulary
+        min_freq=min_word_freq  # Ensures that words appearing at least min_word_freq times in dataset are included in vocab
+    )
+    # This makes unknown token ("<unk>") default value returned by the vocab for any word not found in it
+    vocab.set_default_index(vocab["<unk>"])
+    return vocab
+
+#The first argument in build_vocab_from_iterator is an iterator which is 
+#Iterator used to build Vocab. Must yield list or iterator of tokens.
+#map return an iterator that applies function to every item of iterable,
+#yielding the results.
+
+#min_freq – The minimum frequency needed to include a token in the vocabulary.
+
+#specials – Special symbols to add. The order of supplied tokens will be preserved.
+
+#special_first – Indicates whether to insert symbols at the beginning
+#or at the end.
+
+#max_tokens – If provided, creates the vocab from the 
+#(max_tokens - len(specials)) most frequent tokens
+vocab=build_vocab(mapped_train_data,tokenizer)
+vocab_size=vocab.__len__()
+print(vocab_size)
+window_size=4   # Leads to context window size of 9
+max_seq_len=256 # Only consider first 256 words
+max_norm=1
+embed_dim=300   # size of word embeddings
+batch_size=16
+text_pipeline = lambda x: vocab(tokenizer(x)) 
+# Receives string, returns list of ids based on vocab
+sample=text_pipeline("Hello World")
+print(sample)
+print(type(sample))
+def collate_cbow(batch, text_pipeline):
+    batch_input_words, batch_target_word = [], []
+    
+    # Iterate through each review in the batch
+    for review in batch:
+        
+        # Converts the review into a list of IDs based on vocab
+        review_tokens_ids = text_pipeline(review)
+        
+        # If the review is shorter than context window then skip
+        if len(review_tokens_ids) < window_size * 2 + 1:
+            continue
+        
+        # truncate the token list to max_seq_length
+        if max_seq_len:
+            review_tokens_ids = review_tokens_ids[:max_seq_len]
+        
+        # create sliding windows of context words and target words
+        for idx in range(len(review_tokens_ids) - window_size*2):
+            
+            # Extract a sequence of tokens with the size of 2*window_size + 1
+            current_ids_sequence = review_tokens_ids[idx : (idx + window_size*2 + 1)]
+            
+            # Remove the target word from the middle of the context window
+            target_word = current_ids_sequence.pop(window_size)
+            
+            # The remaining words are the context words
+            input_words = current_ids_sequence
+            
+            batch_input_words.append(input_words)
+            batch_target_word.append(target_word)
+    
+    batch_input_words = torch.tensor(batch_input_words, dtype=torch.long)
+    batch_target_word = torch.tensor(batch_target_word, dtype=torch.long)
+    
+    return batch_input_words, batch_target_word
+# Similarly for skipgram
+
+def collate_skipgram(batch, text_pipeline):
+    
+    batch_input_word, batch_target_words = [], []
+    
+    for review in batch:
+        review_tokens_ids = text_pipeline(review)
+
+        if len(review_tokens_ids) < window_size * 2 + 1:
+            continue
+
+        if max_seq_len:
+            review_tokens_ids = review_tokens_ids[:max_seq_len]
+
+        for idx in range(len(review_tokens_ids) - window_size * 2):
+            current_ids_sequence = review_tokens_ids[idx : (idx + window_size * 2 + 1)]
+            input_word = current_ids_sequence.pop(window_size)
+            target_words = current_ids_sequence
+
+            for target_word in target_words:
+                batch_input_word.append(input_word)
+                batch_target_words.append(target_word)
+
+    batch_input_word = torch.tensor(batch_input_word, dtype=torch.long)
+    batch_target_words = torch.tensor(batch_target_words, dtype=torch.long)
+    return batch_input_word, batch_target_words
+# Create DataLoader instance for training with CBOW
+traindl_cbow = DataLoader(
+    mapped_train_data,
+    batch_size=batch_size,
+    shuffle=True,  # Shuffle the data before each epoch to ensure randomness in the batches
+    collate_fn=partial(collate_cbow, text_pipeline=text_pipeline)  # custom collate function using 'partial' to pass the text_pipeline argument
+)
+
+# Similar for other DataLoaders
+traindl_skipgram = DataLoader(
+        mapped_train_data,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=partial(collate_skipgram,text_pipeline=text_pipeline)
+    )
+
+evaldl_cbow = DataLoader(
+        mapped_eval_data,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=partial(collate_cbow,text_pipeline=text_pipeline)
+    )
+
+evaldl_skipgram = DataLoader(
+        mapped_eval_data,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=partial(collate_skipgram,text_pipeline=text_pipeline)
+    )
+# Define CBOW model as a subclass of nn.Module
+class CBOW(nn.Module):
+    def __init__(self, vocab_size):
+        # Call the parent class constructor
+        super().__init__()
+        
+        # Define the embedding layer
+        self.embeddings = nn.Embedding(
+            num_embeddings=vocab_size,   # Size of the vocabulary
+            embedding_dim=embed_dim,     # Dimension of the word embeddings (Hidden layer - 300)
+            max_norm=max_norm            # used to control the magnitude of the embedding vectors
+        )
+        
+        # Fully Connected layer
+        self.linear = nn.Linear(
+            in_features=embed_dim,   # The size of the input
+            out_features=vocab_size, # The size of the output
+        )
+
+    def forward(self, x):
+        x = self.embeddings(x)
+        x = x.mean(axis=1)  # Compute the mean of the embeddings across the context words
+        x = self.linear(x)  # Pass the averaged embeddings through the linear layer
+        return x
+# Similarly for skipgram
+class SkipGram(nn.Module):
+    
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.embeddings = nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=embed_dim,
+            max_norm=max_norm
+        )
+        self.linear = nn.Linear(
+            in_features=embed_dim,
+            out_features=vocab_size,
+        )
+
+    def forward(self, x):
+        x = self.embeddings(x)
+        x = self.linear(x)
+        return x
+# Function to run one epoch and calculating loss
+def train_one_epoch(model, dataloader):
+    model.train()
+    running_loss = []
+
+    for i, batch_data in enumerate(dataloader):
+        inputs = batch_data[0].to(device)
+        targets = batch_data[1].to(device)
+        opt.zero_grad()
+        outputs = model(inputs)
+        loss = loss_fn(outputs, targets)
+        loss.backward()
+        opt.step()
+
+        running_loss.append(loss.item())
+
+    epoch_loss = np.mean(running_loss)
+    print("Train Epoch Loss:",round(epoch_loss,3))
+    loss_dict["train"].append(epoch_loss)
+# Function to validate one epoch
+def validate_one_epoch(model,dataloader):
+    model.eval()
+    running_loss = []
+
+    with torch.no_grad():
+        for i, batch_data in enumerate(dataloader, 1):
+            inputs = batch_data[0].to(device)
+            targets = batch_data[1].to(device)
+
+            outputs = model(inputs)
+            loss = loss_fn(outputs, targets)
+
+            running_loss.append(loss.item())
+
+
+    epoch_loss = np.mean(running_loss)
+    print("Validation Epoch Loss:",round(epoch_loss,3))
+    loss_dict["val"].append(epoch_loss)
+loss_fn=nn.CrossEntropyLoss()
+n_epochs=5
+loss_dict={}
+loss_dict["train"]=[]
+loss_dict["val"]=[]
+
+choice=input("Enter cbow/skipgram:")
+if choice=="cbow":
+    model=CBOW(vocab_size).to(device)
+    dataloader_train=traindl_cbow
+    dataloader_val=evaldl_cbow
+elif choice=="skipgram":
+    model=SkipGram(vocab_size).to(device)
+    dataloader_train=traindl_skipgram
+    dataloader_val=evaldl_skipgram
+
+# Adam Optimizer
+opt=optim.Adam(params=model.parameters(),lr=0.001)
+for e in range(n_epochs):
+    print("Epoch=",e+1)
+    train_one_epoch(model,dataloader_train)
+    validate_one_epoch(model,dataloader_val)
+# Checking layers of the model (input and hidden are one)
+for name,child in model.named_children():
+    print(name,child)
+# Drop the output layer
+trimmed_model=model.embeddings
+print(trimmed_model)
+# Print the first 100 words in the vocabulary, where 'vocab.get_itos()' returns the list of words
+print(vocab.get_itos()[0:100])
+
+# Print the indices for the words "film" and "movie" in the vocabulary
+print(vocab.lookup_indices(["film", "movie"]))
+# Calculating sample embeddings and calculating similarity between them
+
+emb1=trimmed_model(torch.tensor([vocab.lookup_indices(["film"])]).to(device))
+emb2=trimmed_model(torch.tensor([vocab.lookup_indices(["movie"])]).to(device))
+print(emb1.shape, emb2.shape)
+cos=torch.nn.CosineSimilarity(dim=2)
+print(cos(emb1,emb2))
+
+emb1=trimmed_model(torch.tensor([vocab.lookup_indices(["his"])]).to(device))
+emb2=trimmed_model(torch.tensor([vocab.lookup_indices(["from"])]).to(device))
+print(cos(emb1,emb2))
+
+emb1=trimmed_model(torch.tensor([vocab.lookup_indices(["he"])]).to(device))
+emb2=trimmed_model(torch.tensor([vocab.lookup_indices(["were"])]).to(device))
+print(cos(emb1,emb2))
+
