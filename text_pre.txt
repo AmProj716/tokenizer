@@ -1,0 +1,326 @@
+import numpy as np
+import pandas as pd
+import spacy
+import re
+import string
+import nltk
+from nltk.corpus import stopwords
+from google.colab import drive
+drive.mount('/content/drive')
+import nltk
+
+model=nltk.download('punkt')
+model=nltk.download('averaged_perceptron_tagger')
+doc=nltk.word_tokenize("Apple is looking at buying U.K. startup for $1 billion")
+print(doc)
+print(type(doc))
+print(nltk.pos_tag(doc))
+
+import nltk
+
+# Download the stopwords
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+
+# Get the list of stopwords for English
+stop_words = set(stopwords.words('english'))
+
+print(stop_words)  # Print the stopwords list
+
+from types import prepare_class
+import spacy
+# sentence seperation and pos tagging using spacy
+model = spacy.load("en_core_web_sm")
+doc = model("Apple is looking at buying U.K. startup for $1 billion. Apple keeps the doctor away")
+for sentence in doc.sents:
+    print(sentence)
+for token in doc:
+    print(token.text, token.pos_)
+
+
+
+# remove prepositions
+prep = " ".join([token.text for token in doc if token.pos_ != 'ADP'])
+print("\n\ncleaned text without preposition\n\n")
+print(prep)
+
+
+print(type(stopwords.words()), len(stopwords.words()))
+
+
+print(type(stopwords.words('english')), len(stopwords.words('english'))) #list, 179 stopwords
+
+#now fetch stopwords in English only
+stopwords_eng=stopwords.words('english')
+print(stopwords_eng)
+
+text = " ".join([token.text for token in doc if token.text not in stopwords_eng])
+print("\n\ncleaned text without stopwords\n\n")
+print(text)
+
+# conversion to lowercase
+def to_lowercase(text):
+    return text.lower()
+
+
+text = "Apple is looking at buying U.K. startup for $1 billion. Apple keeps the doctor away"
+lowercase_text = to_lowercase(text)
+print(lowercase_text)
+
+
+#stemming
+from nltk.stem import PorterStemmer
+nltk.download('wordnet')
+stemmer = PorterStemmer()
+stemmed_text = " ".join([stemmer.stem(token.text) for token in doc])
+print("\n\nstemmed text\n\n")
+print(stemmed_text)
+#lemmatization
+lemmatizer = nltk.WordNetLemmatizer()
+lemmatized_text = " ".join([lemmatizer.lemmatize(token.text) for token in doc])
+print("\n\nlemmatized text\n\n")
+print(lemmatized_text)
+# emoji remover
+print("\n\n Html header and emoji removal\n")
+text = "Check out my awesome website! 🌐 Visit <a href='https://www.example.com'>here</a> 👍"
+import re
+!pip install emoji
+import emoji
+print("\n\n Html header and emoji removal\n")
+text = "Check out my awesome website! 🌐 Visit <a href='https://www.example.com'>here</a> 👍"
+text_no_html = re.sub('<[^>]+>', '', text)
+emojirem= ''.join(c for c in text_no_html if c not in emoji.EMOJI_DATA)
+print("Original text:", text)
+print("Cleaned text:", emojirem)
+#convert emoji to meaning
+text = "Check out my awesome website! 🌐 Visit <a href='https://www.example.com'>here</a> 👍"
+text_no_html = re.sub('<[^>]+>', '', text)
+text_with_emoji_meanings = emoji.demojize(text_no_html)
+print(text_with_emoji_meanings)
+from textblob import TextBlob
+#spell checker
+def correct_spelling(text):
+    blob = TextBlob(text)
+    return str(blob.correct())
+
+text = "I havv a spelinng eror in this sentnce."
+corrected_text = correct_spelling(text)
+print(corrected_text)
+
+#chat words to english
+
+import re
+
+def convert_chat_to_english(text):
+
+    chat_dict = {
+        "u": "you",
+        "ur": "your",
+        "r": "are",
+        "btw": "by the way",
+        "omg": "oh my god",
+        "lol": "laughing out loud",
+        "idk": "I don't know",
+        "b4": "before",
+        "gr8": "great",
+        "thx": "thanks",
+        "plz": "please",
+        "cya": "see you",
+        "l8r": "later",
+        "brb": "be right back",
+        "gtg": "got to go",
+        "wanna": "want to",
+        "gonna": "going to",
+        "tbh": "to be honest",
+        "imo": "in my opinion",
+        "ttyl": "talk to you later"
+    }
+
+
+    words = re.findall(r'\b\w+\b', text.lower())
+
+
+    converted_words = [chat_dict.get(word, word) for word in words]
+
+
+    result = re.sub(r'\b\w+\b', lambda m: chat_dict.get(m.group(0).lower(), m.group(0)), text)
+
+    return result
+
+
+text = "omg, u r gr8! plz help me with this code, thx!"
+converted_text = convert_chat_to_english(text)
+print(converted_text)
+
+
+#wordcloud
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
+def generate_wordcloud(text):
+    wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text)
+    plt.figure(figsize=(10, 5))
+    plt.imshow(wordcloud, interpolation="bilinear")
+    plt.axis("off")
+    plt.show()
+
+text = "Python is great for data analysis, visualization, and machine learning."
+generate_wordcloud(text)
+
+
+
+
+.......................................................................................................
+from gensim.models import Word2Vec
+
+sentences = [nltk.word_tokenize(sentence.text) for sentence in doc.sents]
+model_w2v = Word2Vec(sentences, min_count=1)
+print("\n\nword2vec model\n\n")
+print(model_w2v.wv.most_similar('Apple'))
+
+# One-hot Encoding Example
+from sklearn.preprocessing import OneHotEncoder
+
+vocab = set(token.text for token in doc)
+encoder = OneHotEncoder(handle_unknown='ignore')
+encoder.fit([[word] for word in vocab])
+
+# onehot encoding
+onehot_apple = encoder.transform([['Apple']]).toarray()
+print("\n\nonehot encoding\n\n")
+print(onehot_apple)
+
+# TF-IDF Calculation
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+corpus = [sentence.text for sentence in doc.sents]
+vectorizer = TfidfVectorizer()
+
+tfidf_matrix = vectorizer.fit_transform(corpus)
+
+# tfidf score
+feature_names = vectorizer.get_feature_names_out()
+df_tfidf = pd.DataFrame(tfidf_matrix.toarray(), columns=feature_names)
+print("\n\ntfidf scores\n\n")
+print(df_tfidf)
+
+from sklearn import preprocessing
+import numpy as np
+import pandas as pd
+import spacy
+import re
+import string
+import nltk
+from nltk.corpus import stopwords
+from google.colab import drive
+drive.mount('/content/drive')
+
+a= ['cat','dog','elephant']
+le=preprocessing.LabelEncoder()
+le.fit(a)
+print(le.classes_)
+print(le.transform(a))
+
+......................................................................................................
+#!pip install torch
+import torch
+print(torch.__version__)
+
+zeros = torch.zeros(2, 3)
+print(zeros)
+
+ones = torch.ones(2, 3)
+print(ones)
+
+print("generating random tensor")
+c= torch.randn(3,2)
+print(c)
+print(type(c))
+print(c.shape)
+
+ones = torch.zeros(2, 2) + 1
+twos = torch.ones(2, 2) * 2
+threes = (torch.ones(2, 2) * 7 - 1) / 2
+fours = twos ** 2
+sqrt2s = twos ** 0.5
+
+print(ones)
+print(twos)
+print(threes)
+print(fours)
+print(sqrt2s)
+
+
+print("manually defining a tensor")
+a=torch.tensor([[1.2323,2.4443,3.5544],[3.12345,2.5543,1.9980]])
+print(a)
+print(type(a))
+print(a.shape)
+
+print("tensor multiplication")
+b= torch.matmul(a,c)
+print(b)
+print(type(b))
+print(b.shape)
+
+
+# single operators
+d=torch.tensor([[1.2323,2.4443,3.5544],[3.12345,2.5543,1.9980]])
+print(torch.max(d))
+print(torch.max(d).item())
+print(torch.mean(d))
+print(torch.std(d))
+print(torch.prod(d))
+print(torch.unique(torch.tensor([1, 2, 1, 2, 1, 2])))
+
+print("\n\nconverting tensors to numpy array\n")
+t = torch.ones(5)
+print(f"t: {t}")
+n = t.numpy()
+print(f"n: {n}")
+
+print("\n\nconverting numpy array to tensors\n")
+n = np.ones(5)
+t = torch.from_numpy(n)
+print(f"t: {t}")
+
+
+#tensor alteration and reshaping
+
+tensor = torch.tensor([[1, 2, 3], [4, 5, 6]])
+print("Original Tensor:\n", tensor)
+
+reshaped_tensor = tensor.reshape(1, 6)
+print("Reshaped Tensor (1, 6):\n", reshaped_tensor)
+
+
+flattened_tensor = tensor.view(-1)
+print("Flattened Tensor:\n", flattened_tensor)
+
+unsqueezed_tensor = tensor.unsqueeze(0)
+print("Unsqueezed Tensor (add dim at index 0):\n", unsqueezed_tensor)
+
+# Remove dimension at index 1
+squeezed_tensor = tensor.squeeze(1)
+print("Squeezed Tensor (remove dim at index 1):\n", squeezed_tensor)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
