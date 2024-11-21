@@ -1,0 +1,56 @@
+from langchain_community.document_loaders import PyPDFDirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_core.messages import SystemMessage
+import os
+
+
+def read_doc(directory):
+    file_loader = PyPDFDirectoryLoader(directory) # Instantiates a loader to read all PDF files in the specified directory
+    documents = file_loader.load()                # Loads the content of the PDFs into a list of document objects.
+
+    for doc in documents:
+        doc.metadata["source_file"] = doc.metadata.get("file_path", "unknown") # Updates the metadata to include the file's path or "unknown" if not available
+        doc.metadata["page_num"] = doc.metadata.get("page", "unknown") # Updates the metadata to include the page number or "unknown" if not available
+    return documents
+
+currPath = os.getcwd()                             # Retrieves the current working directory
+docsPath = os.path.join(currPath, "documents")     # Constructs the path to the folder named "documents" in the current working directory
+databasePath = os.path.join(currPath, "database")  # Constructs the path to the folder named "database" in the current working directory
+
+print("Parsing and Preprocessing Documents .............")
+docs = read_doc(docsPath)                                  # Calls the read_doc function to parse documents in the "documents" folder
+print("All documents Parsed successfully")
+
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=50)  # Creates a instance to break down text into chunks of 1000 characters with a 50-character overlap
+docChunks = splitter.split_documents(docs)  # Splits the loaded documents into smaller chunks for efficient embedding and retrieval
+
+embedding = OllamaEmbeddings(model="llama3.2")  # Initializes the OllamaEmbeddings model to generate vector embeddings for the document chunks
+pers_dir = "pers"   # Specifies the directory name for persistent storage of the Chroma database
+vectorDB = Chroma.from_documents(docChunks, embedding)  # Creates a Chroma vector database using the document chunks and their embeddings
+
+# Converts the vector database into a retriever object for similarity-based document querying
+retriever = vectorDB.as_retriever(
+    search_type="similarity",
+    similarity_metric="cosine",    # Specifies cosine similarity as the metric for comparing embeddings
+    search_kwargs={'k': 5}         # Limits the search to return the top 5 most similar documents for a query
+)
+
+chat_model = ChatOllama(model="llama3.2")
+
+conversation_history = []
+
+def query_docs(query):
+    relevant_docs = retriever.get_relevant_documents(query)          # Uses the retriever to find documents most relevant to the query.
+    context = " ".join([doc.page_content for doc in relevant_docs])  # Concatenates the content of the retrieved documents into a single context string
+
+    prompt = [SystemMessage(context), query]
+    response = chat_model.invoke(prompt)
+    return response
+
+# Test with a complex query
+sample_query = "What are the main features of Supra Car ? "
+response = query_docs(sample_query)
+print("Response:", response)
