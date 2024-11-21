@@ -1,0 +1,213 @@
+### Sentiment Analysis Using GRU
+!pip install torch==2.0.1 torchtext==0.15.2
+!pip install 'portalocker>=2.0.0'
+from functools import partial      # Used to create a function with partial arguements
+import numpy as np
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch import optim
+
+from torchtext import datasets
+
+# converts iterable-style dataset to map-style dataset
+from torchtext.data.functional import to_map_style_dataset
+from torchtext.data.utils import get_tokenizer
+from torchtext.vocab import build_vocab_from_iterator
+if torch.cuda.is_available():
+    device=torch.device(type='cuda',index=0)
+else:
+    device=torch.device(type='cpu',index=0)
+    
+print(device)
+# IterDataPipe gives tuple of label 1 or 2 and text containing the movie review
+train_data=datasets.IMDB(split='train')
+eval_data=datasets.IMDB(split='test')
+mapped_train_data = to_map_style_dataset(train_data)
+print("Type of Mapped Train Data:",type(mapped_train_data))
+print("0th data point",mapped_train_data[0])
+print("Type of 0th data point",type(mapped_train_data[0]))
+label,review=mapped_train_data[0]
+print("Label=",label)
+print("Review=",review)
+print("Type of Label=",type(label))
+print("Type of Review=",type(review))
+mapped_eval_data=to_map_style_dataset(eval_data)
+tokenizer = get_tokenizer("basic_english", language="en")
+min_word_freq=2
+
+def build_vocab(mapped_train_data, tokenizer):
+    reviews = [review for label, review in mapped_train_data]
+    vocab = build_vocab_from_iterator(
+        map(tokenizer, reviews),             # pass a mapping of the tokenized reviews 
+        specials=["<unk>","<eos>","<pad>"],  # (0,1,2) for unk, eos, pad in dict
+        min_freq=min_word_freq               # only add words that have minimum this frequency
+    )
+    vocab.set_default_index(vocab["<unk>"])  # sets default index to map unknown words in input data
+    return vocab
+vocab=build_vocab(mapped_train_data,tokenizer)
+vocab_size=vocab.__len__()
+print(vocab_size)
+max_seq_len=256          # consider only first 256 words of review
+max_norm=1               # ensures maximum magnitude of embeded vector to be 1            
+embed_dim=300            # size of embeded vector
+batch_size=16
+text_pipeline = lambda x: vocab(tokenizer(x))    # lambda function to tokenize
+#receives string, returns list of ids
+sample=text_pipeline("Hello World")
+print(sample)
+print(type(sample))
+def collate_data(batch, text_pipeline):
+    
+    reviews, targets = [], []
+
+    for label, review in batch:
+        
+        review_tokens_ids = text_pipeline(review) # Tokenize review text into a list of token IDs
+        
+        if max_seq_len:
+            review_tokens_ids = review_tokens_ids[:max_seq_len]
+
+        # Append an <eos> token (index 1) to the end of the tokenized review
+        review_tokens_ids.append(1)
+
+        l = len(review_tokens_ids)
+        
+        # Create a list with <pad> tokens (index 2), of length max_seq_len+1
+        x = [2] * 257 
+
+        # Replace the first `l` positions in `x` with the actual tokens from `review_tokens_ids`
+        x[:l] = review_tokens_ids
+
+        reviews.append(x)
+        targets.append(label)
+
+    reviews = torch.tensor(reviews, dtype=torch.long)
+    targets = torch.tensor(targets, dtype=torch.long)
+
+    return reviews, targets
+traindl = DataLoader(
+        mapped_train_data,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=partial(collate_data,text_pipeline=text_pipeline)
+    )
+
+
+evaldl= DataLoader(
+        mapped_eval_data,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=partial(collate_data,text_pipeline=text_pipeline)
+    )
+for i,(labels,reviews) in enumerate(traindl):
+    print(labels.shape, reviews.shape)
+    break
+print(vocab(["<unk>","<eos>","<pad>"]))
+When batch_first=True, the input tensor is expected to have the shape (batch_size, sequence_length, embed_size), meaning that the batch dimension comes first.
+
+
+If batch_first=False (the default setting), the expected input shape is (sequence_length, batch_size, embed_size), where the sequence length comes first.
+# Architecture of neural network
+class SentiNN(nn.Module):
+    def __init__(self, input_size, embed_size, hidden_size):
+        super().__init__()
+        
+        # Embedding layer: Converts token IDs into dense vectors (embeddings) of size 'embed_size'
+        self.e = nn.Embedding(input_size, embed_size)
+        
+        # Dropout layer: Helps prevent overfitting by randomly dropping neurons during training
+        self.dropout = nn.Dropout(0.2)
+        
+        # It takes embedded words as input and processes them sequentially, producing hidden states
+        
+        self.rnn = nn.GRU(embed_size, hidden_size, batch_first=True)
+        
+        # Output layer: A fully connected linear layer that maps the final hidden state to the output
+        self.out = nn.Linear(in_features=hidden_size, out_features=2)
+
+    def forward(self, x):
+        x = self.e(x)
+        x = self.dropout(x)
+        outputs, hidden = self.rnn(x)
+
+        # The hidden state has shape (1, batch_size, hidden_size), so we remove the first dimension (1)
+        hidden.squeeze_(0)  # Now 'hidden' is of shape (batch_size, hidden_size)
+
+        # Pass the final hidden state through the output layer to get the logits (batch_size, 2)
+        logits = self.out(hidden)
+
+        return logits
+embed_size=128
+hidden_size=256
+
+# Create instance of a neural network
+sentinn=SentiNN(vocab_size,embed_size,hidden_size).to(device)
+
+loss_fn=nn.CrossEntropyLoss(ignore_index=2).to(device)
+lr=0.001
+opt=optim.Adam(params=sentinn.parameters(), lr=lr)
+# Function to train one epoch
+def train_one_epoch():
+    
+    sentinn.train()
+    track_loss=0
+    num_correct=0
+    
+    for i, (reviews_ids,sentiments) in enumerate(traindl):
+        reviews_ids=reviews_ids.to(device)
+        sentiments=sentiments.to(device)-1     # Make labels of the form 0 and 1
+        logits=sentinn(reviews_ids)
+        loss=loss_fn(logits,sentiments)
+        
+        # Accumulate the total loss over multiple batches 
+        track_loss+=loss.item()
+        
+        
+        # (torch.argmax(logits, dim=1) == sentiments) 
+        # This performs element-wise comparison between the predicted classes and the true classes
+        num_correct+=(torch.argmax(logits,dim=1)==sentiments).type(torch.float).sum().item()
+        
+        running_loss=round(track_loss/(i+(reviews_ids.shape[0]/batch_size)),4)
+        running_acc=round((num_correct/((i*batch_size+reviews_ids.shape[0])))*100,4)
+        
+        opt.zero_grad()
+        loss.backward() # Computes Gradients
+        opt.step()      # This performs the parameter update based on the computed gradients
+            
+    epoch_loss=running_loss
+    epoch_acc=running_acc
+    return epoch_loss, epoch_acc
+# Function to evaluate one epoch
+def eval_one_epoch():
+    
+    sentinn.eval()
+    track_loss=0
+    num_correct=0
+        
+    for i, (reviews_ids,sentiments) in enumerate(evaldl):
+        
+        reviews_ids=reviews_ids.to(device)
+        sentiments=sentiments.to(device)-1
+        logits=sentinn(reviews_ids)
+
+        loss=loss_fn(logits,sentiments)
+                
+        track_loss+=loss.item()
+        num_correct+=(torch.argmax(logits,dim=1)==sentiments).type(torch.float).sum().item()
+        
+        running_loss=round(track_loss/(i+(reviews_ids.shape[0]/batch_size)),4)
+        running_acc=round((num_correct/((i*batch_size+reviews_ids.shape[0])))*100,4)
+        
+    epoch_loss=running_loss
+    epoch_acc=running_acc
+    return epoch_loss, epoch_acc
+n_epochs=5
+
+for e in range(n_epochs):
+    print("Epoch=",e+1, sep="", end=", ")
+    epoch_loss,epoch_acc=train_one_epoch()
+    print("Train Loss=", epoch_loss, "Train Acc", epoch_acc)
+    epoch_loss,epoch_acc=eval_one_epoch()
+    print("Eval Loss=", epoch_loss, "Eval Acc", epoch_acc)
